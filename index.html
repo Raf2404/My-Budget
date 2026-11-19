@@ -1012,7 +1012,13 @@ document.addEventListener('visibilitychange',()=>{if(!SY.token)return;if(documen
 addEventListener('online',()=>{if(SY.token)(dirty?push():pull(false))});
 addEventListener('offline',()=>{if(SY.token)setStatus('offline')});
 /* installation PWA (GitHub Pages) */
-if('serviceWorker' in navigator&&location.protocol==='https:'){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}
+if('serviceWorker' in navigator&&location.protocol==='https:'){try{
+ // mise à jour automatique : vérifie à chaque ouverture et recharge dès qu'une nouvelle version est prête
+ let reloaded=false;const hadCtrl=!!navigator.serviceWorker.controller;
+ navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded||!hadCtrl)return;reloaded=true;location.reload()});
+ navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{const up=()=>reg.update().catch(()=>{});up();
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')up()});setInterval(up,30*60*1000)}).catch(()=>{});
+}catch(e){}}
 </script>
 </body>
 </html>

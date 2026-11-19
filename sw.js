@@ -1,6 +1,6 @@
 // Cache hors-ligne : l'appli s'ouvre même sans réseau.
 // Change VERSION à chaque mise à jour pour forcer le rafraîchissement.
-const VERSION = 'budget-pilot-v6';
+const VERSION = 'budget-pilot-v7';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -16,7 +16,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   // Page : réseau d'abord (pour avoir la dernière version), cache si hors-ligne
   if (e.request.mode === 'navigate') {
-    e.respondWith(fetch(e.request).then(r => { const c = r.clone(); caches.open(VERSION).then(x => x.put('./index.html', c)); return r; }).catch(() => caches.match('./index.html')));
+    e.respondWith(fetch(e.request, { cache: 'no-store' }).then(r => { const c = r.clone(); caches.open(VERSION).then(x => x.put('./index.html', c)); return r; }).catch(() => caches.match('./index.html')));
     return;
   }
   // Reste (icônes, polices) : cache d'abord

@@ -139,6 +139,16 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .opt .ov{font-family:var(--serif);font-size:21px;margin-top:3px;line-height:1.1}
 .opt .os{font-size:12.5px;color:var(--mute);font-weight:600;margin-top:3px}
 .opt:disabled{opacity:.45;cursor:default}
+.chosen{display:flex;align-items:center;gap:12px;width:100%;margin-top:14px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:var(--s2);text-align:left;transition:transform .15s}
+.chosen .grow{display:flex;flex-direction:column;gap:3px}
+.chosen .cv{font-size:13.5px;font-weight:700}
+.chosen .cv b{font-family:var(--serif);font-weight:400;font-size:17px}
+.chosen .cv b .sub{font-family:var(--sans);font-size:11.5px}
+.chosen>.sub{display:inline-flex;align-items:center;gap:2px;flex:none}
+.chosen>.sub svg{transition:transform .3s}
+.chosen.open{background:transparent;border-color:transparent;padding:0;margin-top:16px}
+.chosen.open>.sub svg{transform:rotate(90deg)}
+.opts{animation:rise .4s cubic-bezier(.2,.75,.2,1) both}
 .okline{display:flex;align-items:center;gap:8px;margin-top:14px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb,var(--good) 10%,transparent);color:var(--good);font-weight:700;font-size:13.5px}
 .note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:var(--s2);font-size:13px;font-weight:600;color:var(--mute);margin-top:12px;line-height:1.45}
 .note b{color:var(--txt)}
@@ -240,6 +250,7 @@ image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r=
 edit:'<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
 gear:'<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
 share:'<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/>',
+chev:'<path d="m9 18 6-6-6-6"/>',
 info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
 check:'<path d="M20 6 9 17l-5-5"/>',
 lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
@@ -314,6 +325,7 @@ function setPath(p,v){const k=p.split('.');let o=S;for(let i=0;i<k.length-1;i++)
 
 const GPRESETS=[{e:'✈️',n:'Voyage',p:1200},{e:'🛋️',n:'Meuble',p:800},{e:'🖥️',n:'Écran PC',p:350},{e:'📱',n:'Smartphone',p:900},{e:'🚗',n:'Réparation voiture',p:600},{e:'🎁',n:'Cadeaux',p:300}];
 const XPRESETS=[{e:'💰',n:'Prime'},{e:'⏱️',n:'Heures sup'},{e:'🎄',n:'13e mois'},{e:'💸',n:'Remboursement'},{e:'🏷️',n:'Vente'},{e:'🎁',n:'Cadeau reçu'}];
+const openOpts=new Set();
 const STRATS={
  boost:{t:'Augmenter l’apport ensuite',i:'📈'},
  cut:{t:'Réduire mes plaisirs',i:'🍽️'},
@@ -436,7 +448,9 @@ function outs(){
    debt:rD.K>0?{v:`${eur(rD.K)} <span class="sub">à rattraper</span>`,s:`Mensualité inchangée. Sans prime, l’apport ${rD.reached===null?'devient hors d’atteinte':'arrive '+dur(rD.reached-rD.nM)+' plus tard'}.`}:
                 {v:'Déjà couvert',s:'Tes revenus annexes prévus rattrapent tout ✓'}
   };
-  o['gopt-'+id]=`<div class="cap mt">Pour l’avoir à temps · il manque ${eur(g.short)}</div><div class="opts">${Object.entries(STRATS).map(([k,st])=>{const it=items[k];
+  const cur=items[G.strat]||items.boost,cst=STRATS[G.strat]||STRATS.boost;
+  if(!openOpts.has(id)){o['gopt-'+id]=`<button class="chosen" data-act="optToggle" data-id="${id}"><span class="grow"><span class="sub">Financement · il manque ${eur(g.short)}</span><span class="cv">${cst.i} ${cst.t} · <b>${cur.v}</b></span></span><span class="sub">Changer ${ic('chev',14)}</span></button>`;return}
+  o['gopt-'+id]=`<button class="chosen open" data-act="optToggle" data-id="${id}"><span class="grow"><span class="sub">Pour l’avoir à temps · il manque ${eur(g.short)}</span></span><span class="sub">Masquer ${ic('chev',14)}</span></button><div class="opts">${Object.entries(STRATS).map(([k,st])=>{const it=items[k];
    return`<button class="opt ${G.strat===k?'on':''}" data-act="strat" data-id="${id}" data-v="${k}" ${it.dis?'disabled':''}><span class="radio"></span><div class="grow"><div class="ot">${st.i} ${st.t}</div><div class="ov">${it.v}</div><div class="os">${it.s}</div></div></button>`}).join('')}</div>`;
  });
  return o;
@@ -657,7 +671,8 @@ const A={
  theme:t=>{S.theme=t.dataset.v;save();render();settingsSheet()},
  addFixed:()=>{S.fixed.push({name:'Nouvelle charge',amount:0});commit()},
  delFixed:t=>{const k=snapS();S.fixed.splice(+t.dataset.i,1);commit();toastUndo('Charge supprimée',k)},
- strat:t=>{const g=S.goals.find(x=>x.id===t.dataset.id);g.strat=t.dataset.v;save();refresh();sparkle(t.querySelector('.radio'))},
+ strat:t=>{const g=S.goals.find(x=>x.id===t.dataset.id);g.strat=t.dataset.v;sparkle(t.querySelector('.radio'));openOpts.delete(g.id);save();refresh()},
+ optToggle:t=>{const id=t.dataset.id;openOpts.has(id)?openOpts.delete(id):openOpts.add(id);refresh()},
  goalNew:()=>goalSheet(null),goalEdit:t=>goalSheet(t.dataset.id),
  gPreset:t=>{const p=GPRESETS[+t.dataset.i];$('#gE').value=p.e;$('#gN').value=p.n;$('#gP').value=p.p;$$('#sheet .chip').forEach(c=>c.classList.toggle('on',c===t))},
  goalSave:t=>{const id=t.dataset.id,d={emoji:val('gE').trim()||'✨',name:val('gN').trim()||'Objectif',price:num(val('gP')),saved:num(val('gS')),date:val('gD')||addMonths(T0,3)};

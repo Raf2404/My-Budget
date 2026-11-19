@@ -1,6 +1,6 @@
 // Cache hors-ligne : l'appli s'ouvre même sans réseau.
 // Change VERSION à chaque mise à jour pour forcer le rafraîchissement.
-const VERSION = 'budget-pilot-v3';
+const VERSION = 'budget-pilot-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

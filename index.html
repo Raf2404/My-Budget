@@ -183,6 +183,13 @@ nav button.on::after{opacity:1;transform:none}
 .chart svg{width:100%;height:120px;display:block}
 .toast{position:fixed;left:50%;top:calc(14px + env(safe-area-inset-top));transform:translate(-50%,-24px);background:var(--txt);color:var(--bg);font-weight:800;font-size:13.5px;padding:11px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:.4s cubic-bezier(.3,1.4,.5,1);z-index:80}
 .toast.on{opacity:1;transform:translate(-50%,0)}
+.toast.act{pointer-events:auto}
+.toast button{background:none;border:0;color:inherit;font-weight:800;text-decoration:underline;margin-left:12px;padding:0;font-size:13.5px}
+.stat{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--mute);white-space:nowrap}
+.stat i{width:6px;height:6px;border-radius:50%;background:var(--good);transition:background .3s}
+.stat.busy i{animation:blink 1s infinite}@keyframes blink{50%{opacity:.25}}
+.steps{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--mute);font-weight:600;line-height:1.6}
+.steps b{color:var(--txt)}
 .spark{position:fixed;width:5px;height:5px;border-radius:50%;background:var(--acc);z-index:90;pointer-events:none;animation:sp .9s cubic-bezier(.15,.7,.3,1) forwards}
 @keyframes sp{to{transform:translate(var(--tx),var(--ty)) scale(.2);opacity:0}}
 body.share header,body.share nav{display:none!important}
@@ -192,7 +199,7 @@ body.share header,body.share nav{display:none!important}
 <div class="wrap" id="wrap">
   <header>
     <div><div class="cap" id="today"></div><div class="hello mt8" data-o="hello"></div></div>
-    <button class="ib" data-act="settings" aria-label="Réglages" id="gear"></button>
+    <div class="row" style="gap:10px"><span class="stat" id="status"></span><button class="ib" data-act="settings" aria-label="Réglages" id="gear"></button></div>
   </header>
   <main id="view"></main>
 </div>
@@ -242,7 +249,7 @@ const ic=(n,s=18)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="no
 /* ============ données ============ */
 const KEY='budgetpilot.v1',T0=nowYM();
 const THEMES={onyx:{l:'Onyx',a:'#0e0e10',b:'#d6b37a',bg:'#0e0e10'},ivoire:{l:'Ivoire',a:'#f4f0e8',b:'#b5583b',bg:'#f4f0e8'},sauge:{l:'Sauge',a:'#0f1412',b:'#a9c6a1',bg:'#0f1412'},minuit:{l:'Minuit',a:'#0a0e19',b:'#a3b5ff',bg:'#0a0e19'},rose:{l:'Rosé',a:'#130e11',b:'#e9a8b8',bg:'#130e11'}};
-const DEFAULT={v:2,name:'',theme:'onyx',income:2400,variable:400,restoPrice:25,
+const DEFAULT={v:2,closed:[],name:'',theme:'onyx',income:2400,variable:400,restoPrice:25,
  fixed:[{name:'Loyer',amount:750},{name:'Courses',amount:300},{name:'Transport',amount:75},{name:'Assurances',amount:60},{name:'Abonnements',amount:45}],
  extras:[{id:'e1',label:'Prime de fin d’année',emoji:'💰',amount:500,month:addMonths(T0,1)}],
  main:{name:'Apport immobilier',emoji:'🏡',target:30000,current:6000,date:addMonths(T0,48),rate:3},
@@ -264,7 +271,45 @@ function migrate(d){
 }
 function load(){try{const r=localStorage.getItem(KEY);if(r)return migrate(JSON.parse(r))}catch(e){}return clone(DEFAULT)}
 let S=load(),saveWarned=false;
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){if(!saveWarned){saveWarned=true;toast('Sauvegarde locale indisponible')}}}
+/* ---- sauvegarde automatique : appareil + copie quotidienne + synchro GitHub ---- */
+const SYNC_KEY='budgetpilot.sync',GH='https://api.github.com';
+let SY=(()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY))||{}}catch(e){return{}}})();
+const saveSync=()=>{try{localStorage.setItem(SYNC_KEY,JSON.stringify(SY))}catch(e){}};
+let syncState=SY.token?'saving':'local';
+const STAT={local:['','Enregistré'],saving:['var(--warn)','Synchro…'],ok:['','Synchronisé'],error:['var(--bad)','Synchro en échec'],offline:['var(--mute)','Hors ligne']};
+function setStatus(st){syncState=st;const el=$('#status');if(!el)return;const[c,l]=STAT[st];el.className='stat'+(st==='saving'?' busy':'');el.innerHTML=`<i style="${c?'background:'+c:''}"></i>${l}`}
+function save(){S.updatedAt=Date.now();
+ try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){if(!saveWarned){saveWarned=true;toast('Mémoire pleine : retire des photos de la wishlist')}}
+ snapshotSoon();if(SY.token)schedulePush();else setStatus('local')}
+// copie quotidienne (30 jours) dans IndexedDB
+let _db;const idb=()=>_db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('budgetpilot',1);r.onupgradeneeded=()=>r.result.createObjectStore('snaps',{keyPath:'d'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}));
+async function snapList(){const db=await idb();return new Promise(res=>{const r=db.transaction('snaps').objectStore('snaps').getAll();r.onsuccess=()=>res(r.result.sort((a,b)=>b.t-a.t));r.onerror=()=>res([])})}
+async function snapPut(){try{const db=await idb(),d=new Date().toLocaleDateString('sv');const tx=db.transaction('snaps','readwrite');tx.objectStore('snaps').put({d,t:Date.now(),data:JSON.stringify(S)});
+ const all=await snapList();if(all.length>30){const t2=db.transaction('snaps','readwrite');all.slice(30).forEach(x=>t2.objectStore('snaps').delete(x.d))}}catch(e){}}
+let snapT;function snapshotSoon(){clearTimeout(snapT);snapT=setTimeout(snapPut,1500)}
+// synchro : un fichier budget.json dans un dépôt GitHub PRIVÉ
+const b64e=str=>{const b=new TextEncoder().encode(str);let bin='';for(let i=0;i<b.length;i+=0x8000)bin+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(bin)};
+const b64d=str=>new TextDecoder().decode(Uint8Array.from(atob(str.replace(/\s/g,'')),c=>c.charCodeAt(0)));
+const ghH=(raw,tok)=>({Authorization:'Bearer '+(tok||SY.token),Accept:raw?'application/vnd.github.raw+json':'application/vnd.github+json'});
+const ghURL=()=>`${GH}/repos/${SY.repo}/contents/${SY.path||'budget.json'}`;
+async function ghGet(){const r=await fetch(ghURL()+'?t='+Date.now(),{headers:ghH(),cache:'no-store'});if(r.status===404)return null;if(!r.ok)throw r.status;
+ const j=await r.json();let txt=j.content?b64d(j.content):'';if(!txt){const r2=await fetch(ghURL()+'?t='+Date.now(),{headers:ghH(true),cache:'no-store'});txt=await r2.text()}return{sha:j.sha,data:JSON.parse(txt)}}
+async function ghPut(){const body={message:'Sauvegarde auto · '+new Date().toLocaleString('fr-FR'),content:b64e(JSON.stringify(S))};if(SY.sha)body.sha=SY.sha;
+ const r=await fetch(ghURL(),{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});
+ if(r.status===409||r.status===422)return'conflict';if(!r.ok)throw r.status;const j=await r.json();SY.sha=j.content.sha;SY.last=Date.now();saveSync();return'ok'}
+let pushT,pushing=false,dirty=false;
+function schedulePush(){dirty=true;setStatus('saving');clearTimeout(pushT);pushT=setTimeout(push,2000)}
+async function push(){if(!SY.token||pushing)return;if(!navigator.onLine){setStatus('offline');return}pushing=true;dirty=false;
+ try{let res=await ghPut();if(res==='conflict'){const rem=await ghGet();SY.sha=rem&&rem.sha;if(rem&&(rem.data.updatedAt||0)>(S.updatedAt||0))applyRemote(rem.data);else await ghPut()}setStatus('ok')}
+ catch(e){setStatus(e===401?'error':'error')}finally{pushing=false;if(dirty)schedulePush()}}
+async function pull(first){if(!SY.token||pushing||dirty)return;if(!navigator.onLine){setStatus('offline');return}
+ try{setStatus('saving');const rem=await ghGet();if(!rem){await push();return}SY.sha=rem.sha;SY.last=Date.now();saveSync();
+  const ru=rem.data.updatedAt||0,lu=S.updatedAt||0;
+  if(first&&ru!==lu){const keep=JSON.stringify(S);applyRemote(rem.data);toastUndo('Données récupérées de ta sauvegarde en ligne',keep)}
+  else if(ru>lu){applyRemote(rem.data);toast('Mis à jour depuis ton autre appareil')}
+  else if(ru<lu){await push();return}
+  setStatus('ok')}catch(e){setStatus('error')}}
+function applyRemote(d){S=migrate(d);try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(!$('#modal').classList.contains('on'))render();else refresh()}
 function setPath(p,v){const k=p.split('.');let o=S;for(let i=0;i<k.length-1;i++)o=o[k[i]];o[k[k.length-1]]=v}
 
 const GPRESETS=[{e:'✈️',n:'Voyage',p:1200},{e:'🛋️',n:'Meuble',p:800},{e:'🖥️',n:'Écran PC',p:350},{e:'📱',n:'Smartphone',p:900},{e:'🚗',n:'Réparation voiture',p:600},{e:'🎁',n:'Cadeaux',p:300}];
@@ -348,6 +393,13 @@ function outs(){
   return`<div class="li" style="padding-left:0;padding-right:0"><span class="tile">${esc(G.emoji)}</span><div class="grow"><div class="row between"><span class="t ell">${esc(G.name)}</span><span class="sub">${fmtYM(G.date)}</span></div><div class="bar mt8"><i class="grow-x" style="width:${p}%"></i></div></div></div>`}).join(''):'<div class="empty">Aucun objectif annexe</div>';
  const fx=S.extras.filter(e=>e.month>T0).sort((a,b)=>a.month<b.month?-1:1);
  o.dashExtras=fx.length?`<div class="card rise" style="--d:4"><div class="row between"><span class="cap">Revenus annexes à venir</span><span class="h2 good">+${eur(extrasFuture())}</span></div>${fx.slice(0,3).map(e=>`<div class="row between mt8 sub"><span>${esc(e.emoji)} ${esc(e.label)}</span><span>${fmtYM(e.month)} · ${eur(e.amount)}</span></div>`).join('')}</div>`:'';
+ const moisNom=new Date().toLocaleDateString('fr-FR',{month:'long'});
+ if((S.closed||[]).includes(T0))o.closeCard=`<div class="okline">${ic('check',16)} Virements de ${moisNom} faits</div>`;
+ else{const items=[[M.emoji+' '+M.name,m.P-m.dB-m.dD]];R.goals.forEach(g=>{if(g.rem>0){const G=S.goals.find(x=>x.id===g.id);items.push([G.emoji+' '+G.name,g.need])}});
+  const sum=items.reduce((a,x)=>a+Math.max(0,x[1]),0);
+  o.closeCard=`<section class="card"><div class="row between"><span class="cap">Virements de ${moisNom}</span><span class="h2 acc">${eur(sum)}</span></div>
+   ${items.map(x=>`<div class="row between mt8 sub"><span class="ell">${esc(x[0])}</span><span>${eur(x[1])}</span></div>`).join('')}
+   <button class="btn pri full mt" data-act="closeMonth">C’est fait, j’ai viré</button></section>`}
  /* budget */
  o.rav=eur(bd.rav);o.capB=`<span class="${bd.C<0?'bad':''}">${eur(bd.C)}</span>`;o.fixedT=eur(bd.fixed);
  o.varV=eur(S.variable);
@@ -429,6 +481,7 @@ function vAccueil(){return`
  <div class="legend" data-o="splitList"></div>
  <div data-o="capAlert"></div>
 </section>
+<div data-o="closeCard"></div>
 <section class="card rise" ${D(1)}>
  <div class="row between"><span class="cap">Objectif principal</span><span data-o="mStatus"></span></div>
  <div class="row between end mt"><div class="h2 ell">${esc(S.main.emoji)} ${esc(S.main.name)}</div><div class="h2 acc" data-o="mPct"></div></div>
@@ -569,18 +622,31 @@ function settingsSheet(){openSheet=settingsSheet;openModal(`${shead('Réglages')
  <div class="fld mt"><span>Thème</span></div>
  <div class="themes mt8">${Object.entries(THEMES).map(([k,t])=>`<button class="sw ${S.theme===k?'on':''}" data-act="theme" data-v="${k}" style="--a:${t.a};--b:${t.b}"><i></i>${t.l}</button>`).join('')}</div>
  <div class="mt">${fld('Prix moyen d’un resto','restoPrice',S.restoPrice)}</div>
- <button class="btn full mt" data-act="data">Sauvegarder / restaurer</button>`)}
+ <div class="fld mt"><span>Synchro iPhone ↔ PC</span></div>
+ ${SY.token?`<div class="note">${ic('check',16)}<span>Connecté à <b>${esc(SY.repo)}</b>. Chaque changement y est envoyé automatiquement.<br>Dernière synchro : ${SY.last?new Date(SY.last).toLocaleString('fr-FR',{dateStyle:'short',timeStyle:'short'}):'—'}</span></div>
+  <div class="g2 mt8"><button class="btn" data-act="syncNow">Synchroniser</button><button class="btn danger" data-act="syncOff">Déconnecter</button></div>`
+ :`<ol class="steps"><li>Crée un dépôt <b>privé</b> sur GitHub (ex. <b>my-budget-data</b>)</li><li>GitHub → Settings → Developer settings → <b>Fine-grained tokens</b> → accès à ce seul dépôt, permission <b>Contents : Read and write</b></li><li>Colle le dépôt et le jeton ici, sur chaque appareil</li></ol>
+  <input id="syRepo" class="mt8" placeholder="Raf2404/my-budget-data" autocapitalize="off" autocorrect="off" spellcheck="false">
+  <input id="syTok" class="mt8" type="password" placeholder="Jeton github_pat_…" autocomplete="off">
+  <button class="btn pri full mt8" data-act="syncOn">Connecter</button>`}
+ <button class="btn full mt" data-act="data">Sauvegardes & restauration</button>`)}
 function dataSheet(){const framed=(()=>{try{return window.self!==window.top}catch(e){return true}})();
- openModal(`${shead('Sauvegarde')}
+ openModal(`${shead('Sauvegardes')}
+ <div class="note">${ic('check',16)}<span>Chaque changement est enregistré automatiquement. Une copie par jour est gardée 30 jours sur cet appareil.</span></div>
+ <div class="fld mt"><span>Revenir à une version</span></div>
+ <div class="group mt8" id="snaps"><div class="empty">Chargement…</div></div>
  <div class="fld mt"><span>Exporter</span></div><textarea id="exp" readonly class="mt8">${esc(JSON.stringify(S))}</textarea>
  <div class="${framed?'':'g2'} mt8"><button class="btn full" data-act="copyExp">${ic('copy',16)} Copier</button>${framed?'':`<button class="btn" data-act="dlExp">Télécharger</button>`}</div>
  <div class="fld mt"><span>Importer</span></div><textarea id="imp" class="mt8" placeholder="Colle ta sauvegarde ici"></textarea>
  <div class="g2 mt8"><label class="btn">Fichier<input type="file" accept=".json,application/json" id="impFile" hidden></label><button class="btn pri" data-act="doImp">Importer</button></div>
  <button class="btn danger full mt" data-act="reset">Tout réinitialiser</button>`);
- $('#impFile').onchange=e=>{const f=e.target.files[0];if(f)f.text().then(t=>{$('#imp').value=t;toast('Fichier chargé')})}}
+ $('#impFile').onchange=e=>{const f=e.target.files[0];if(f)f.text().then(t=>{$('#imp').value=t;toast('Fichier chargé')})};
+ snapList().then(l=>{const el=$('#snaps');if(!el)return;el.innerHTML=l.length?l.slice(0,15).map(x=>`<div class="li"><span class="lab">${new Date(x.t).toLocaleString('fr-FR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span><button class="btn" style="padding:7px 12px;font-size:13px;border-radius:11px" data-act="snapRestore" data-d="${x.d}">Restaurer</button></div>`).join(''):'<div class="empty">Aucune copie pour l’instant</div>'}).catch(()=>{const el=$('#snaps');if(el)el.innerHTML='<div class="empty">Indisponible dans ce navigateur</div>'})}
 
 /* ============ actions ============ */
-let toastT;function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('on'),2200)}
+let toastT,undoSnap=null;function toast(t){const el=$('#toast');el.textContent=t;el.classList.remove('act');el.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('on'),2200)}
+function toastUndo(msg,keep){undoSnap=keep;const el=$('#toast');el.innerHTML=esc(msg)+'<button data-act="undo">Annuler</button>';el.classList.add('on','act');clearTimeout(toastT);toastT=setTimeout(()=>{el.classList.remove('on','act');undoSnap=null},5500)}
+const snapS=()=>JSON.stringify(S);
 function sparkle(el){if(reduce||!el)return;const r=el.getBoundingClientRect();for(let i=0;i<18;i++){const s=document.createElement('i');s.className='spark';s.style.left=r.left+r.width/2+'px';s.style.top=r.top+r.height/2+'px';const a=i/18*Math.PI*2,d=40+Math.random()*50;s.style.setProperty('--tx',Math.cos(a)*d+'px');s.style.setProperty('--ty',Math.sin(a)*d+'px');document.body.appendChild(s);setTimeout(()=>s.remove(),950)}}
 async function copy(t){try{await navigator.clipboard.writeText(t);toast('Copié')}catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch(_){}ta.remove();toast(ok?'Copié':'Copie impossible ici')}}
 const commit=()=>{save();render();if(openSheet&&$('#modal').classList.contains('on'))openSheet()};
@@ -590,7 +656,7 @@ const A={
  settings:settingsSheet,data:dataSheet,close:closeModal,
  theme:t=>{S.theme=t.dataset.v;save();render();settingsSheet()},
  addFixed:()=>{S.fixed.push({name:'Nouvelle charge',amount:0});commit()},
- delFixed:t=>{S.fixed.splice(+t.dataset.i,1);commit()},
+ delFixed:t=>{const k=snapS();S.fixed.splice(+t.dataset.i,1);commit();toastUndo('Charge supprimée',k)},
  strat:t=>{const g=S.goals.find(x=>x.id===t.dataset.id);g.strat=t.dataset.v;save();refresh();sparkle(t.querySelector('.radio'))},
  goalNew:()=>goalSheet(null),goalEdit:t=>goalSheet(t.dataset.id),
  gPreset:t=>{const p=GPRESETS[+t.dataset.i];$('#gE').value=p.e;$('#gN').value=p.n;$('#gP').value=p.p;$$('#sheet .chip').forEach(c=>c.classList.toggle('on',c===t))},
@@ -598,16 +664,16 @@ const A={
   if(!d.price){toast('Indique un prix');return}
   if(id)Object.assign(S.goals.find(x=>x.id===id),d);else S.goals.push({id:uid(),strat:'boost',...d});
   closeModal();save();if(tab!=='objectifs'&&!id){toast('Ajouté à tes objectifs');render()}else render()},
- goalDel:t=>{S.goals=S.goals.filter(x=>x.id!==t.dataset.id);closeModal();commit()},
+ goalDel:t=>{const k=snapS();S.goals=S.goals.filter(x=>x.id!==t.dataset.id);closeModal();commit();toastUndo('Objectif supprimé',k)},
  extraNew:()=>extraSheet(null),extraEdit:t=>extraSheet(t.dataset.id),
  xPreset:t=>{const p=XPRESETS[+t.dataset.i];$('#xE').value=p.e;$('#xL').value=p.n;$$('#sheet .chip').forEach(c=>c.classList.toggle('on',c===t))},
  extraSave:t=>{const id=t.dataset.id,d={emoji:val('xE').trim()||'💰',label:val('xL').trim()||'Revenu',amount:num(val('xA')),month:val('xM')||T0};
   if(!d.amount){toast('Indique un montant');return}
   if(id)Object.assign(S.extras.find(x=>x.id===id),d);else S.extras.push({id:uid(),...d});
   closeModal();save();render();toast(id?'Modifié':'+'+eur(d.amount)+' ajouté')},
- extraDel:t=>{S.extras=S.extras.filter(x=>x.id!==t.dataset.id);closeModal();commit()},
+ extraDel:t=>{const k=snapS();S.extras=S.extras.filter(x=>x.id!==t.dataset.id);closeModal();commit();toastUndo('Revenu supprimé',k)},
  wishNew:()=>wishSheet(-1),wishEdit:t=>wishSheet(+t.dataset.i),
- wishDel:t=>{S.wish.splice(+t.dataset.i,1);closeModal();commit()},
+ wishDel:t=>{const k=snapS();S.wish.splice(+t.dataset.i,1);closeModal();commit();toastUndo('Idée supprimée',k)},
  wishSt:t=>{const k=Object.keys(WST),w=S.wish[+t.dataset.i];w.status=k[(k.indexOf(w.status||'envie')+1)%k.length];if(w.status==='offert')sparkle(t);commit()},
  wishGoal:t=>{const w=S.wish[+t.dataset.i];goalSheet(null,{name:w.name,emoji:w.emoji||'🎁',price:num(w.price)})},
  prio:t=>{tmpPrio=+t.dataset.i;$$('#wPrio button').forEach(b=>b.classList.toggle('on',+b.dataset.i===tmpPrio))},
@@ -618,13 +684,35 @@ const A={
  dlExp:()=>{try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S,null,1)],{type:'application/json'}));a.download='budget-pilot-'+T0+'.json';a.click()}catch(e){toast('Téléchargement impossible ici')}},
  doImp:()=>{try{const d=JSON.parse($('#imp').value);if(!d||typeof d!=='object'||!('income' in d))throw 0;S=migrate(d);closeModal();commit();toast('Données importées')}catch(e){toast('Sauvegarde invalide')}},
  reset:t=>{t.dataset.act='resetOk';t.textContent='Sûr ? Touche encore pour confirmer'},
- resetOk:()=>{S=clone(DEFAULT);closeModal();commit();toast('Réinitialisé')}
+ resetOk:()=>{const k=snapS();S=clone(DEFAULT);closeModal();commit();toastUndo('Tout a été réinitialisé',k)},
+ undo:()=>{if(!undoSnap)return;S=migrate(JSON.parse(undoSnap));undoSnap=null;save();render();toast('Annulé')},
+ closeMonth:t=>{const k=snapS(),R=simulate(),m=R.months[0];if(!m)return;
+  S.main.current=Math.round(num(S.main.current)+Math.max(0,m.P-m.dB-m.dD));
+  R.goals.forEach(g=>{if(g.rem>0){const G=S.goals.find(x=>x.id===g.id);G.saved=Math.min(num(G.price),Math.round(num(G.saved)+g.need))}});
+  S.closed=[...(S.closed||[]),T0];sparkle(t);commit();toastUndo('Montants ajoutés à ton épargne',k)},
+ snapRestore:async t=>{try{const l=await snapList(),x=l.find(y=>y.d===t.dataset.d);if(!x)return;const k=snapS();S=migrate(JSON.parse(x.data));closeModal();save();render();toastUndo('Version restaurée',k)}catch(e){toast('Restauration impossible')}},
+ syncOn:async t=>{const repo=val('syRepo').trim().replace(/^https?:\/\/github\.com\//,'').replace(/\.git$|\/$/g,''),token=val('syTok').trim();
+  if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||!token){toast('Indique le dépôt et le jeton');return}
+  t.textContent='Connexion…';
+  try{const r=await fetch(`${GH}/repos/${repo}`,{headers:ghH(false,token)});if(r.status===401)throw'Jeton refusé';if(!r.ok)throw'Dépôt introuvable avec ce jeton';
+   const j=await r.json();if(!j.private)throw'Ce dépôt est public : choisis un dépôt privé';
+   SY={token,repo,path:'budget.json'};saveSync();await pull(true);if(openSheet===settingsSheet)settingsSheet();if(syncState==='ok')toast('Synchro activée')}
+  catch(e){toast(typeof e==='string'?e:'Connexion impossible (vérifie ta connexion)');t.textContent='Connecter'}},
+ syncNow:async()=>{if(dirty){clearTimeout(pushT);await push()}else await pull(false);settingsSheet();toast(syncState==='ok'?'Synchronisé':'Synchro en échec')},
+ syncOff:t=>{if(t.dataset.ok!=='1'){t.dataset.ok='1';t.textContent='Sûr ? Touche encore';return}SY={};saveSync();setStatus('local');settingsSheet();toast('Synchro désactivée')}
 };
 document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(!t)return;const a=A[t.dataset.act];if(a){e.preventDefault();e.stopPropagation();a(t)}});
 document.addEventListener('input',e=>{const el=e.target,k=el.dataset.k;if(!k)return;let v=el.value;if(el.type==='month'&&!v)return;
  if(el.type==='range'||'n' in el.dataset)v=num(v);setPath(k,v);save();refresh()});
 window.addEventListener('hashchange',route);
 route();
+setStatus(syncState);
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{})}catch(e){}
+snapshotSoon();
+if(SY.token)pull(false);
+document.addEventListener('visibilitychange',()=>{if(!SY.token)return;if(document.visibilityState==='hidden'){if(dirty){clearTimeout(pushT);push()}}else pull(false)});
+addEventListener('online',()=>{if(SY.token)(dirty?push():pull(false))});
+addEventListener('offline',()=>{if(SY.token)setStatus('offline')});
 /* installation PWA (GitHub Pages) */
 if('serviceWorker' in navigator&&location.protocol==='https:'){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}
 </script>
